@@ -6,4 +6,5 @@ Alternatively, please follow the following address
 http://ngduyhieu.github.io/PracticalMachineLearning_CourseProject/PracticalML.html
 
 Or
+
 http://rpubs.com/ngduyhieu/125178
