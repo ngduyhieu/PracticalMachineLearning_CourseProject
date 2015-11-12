@@ -1,0 +1,187 @@
+---
+output: html_document
+---
+
+# This file is for the course project of Practical Machine Learning - Coursera
+
+### Tilte: Machine Learning for Prediction of the Activity Types
+
+### Overview: 
+
+In this project, we analyze how well the people do a particular activity. In particular, we train machine learning models to predict the quality of an activity. The training data is from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. We then take a testing data of 20 samples and attempt to determine the quality of each sample (by deciding the type of the activity: A, B, C, D, or E). The data is available from:  http://groupware.les.inf.puc-rio.br/har
+
+## =======================================================================
+
+## Part 1: Load and Process the Training Data
+
+we first load the training data to a data frame.  
+
+```{r}
+library(caret)
+trainingRaw  <- read.csv("pml-training.csv")
+```
+
+Using the "head" function, we observe that the first 7 columns have unecessary data. We thus delete them from the training data.
+
+```{r}
+#### Drop the first 7 columns
+trainingAll <- trainingRaw[, -c(1:7)]
+```
+
+Furthermore, there are several columns which have many NA and NULL values. We also delete them from the data set. The result is a clean data set "trainingAll"
+
+```{r}
+#### Select only columns without any NA
+trainingAll <- trainingAll[, colSums(is.na(trainingAll)) == 0]
+#### Delete the columns without any value
+trainingAll <- trainingAll[, colSums(trainingAll == "") == 0]
+#### Select the data without NA
+trainingAll$classe <- as.factor(trainingRaw$classe)
+```
+
+## ======================================================================
+
+## Part 2: Data Pre-Processing
+
+To train and then predict our machine learning model's accuracy, we split the data set into three:
+
+* training: to train simple learning model
+
+* crosVal: to blend different simple learning model
+
+* testing: to predict our models' accuracy. Since we employ "crosVal"" to blend the models, we have to use a different data set for our test.
+
+```{r}
+set.seed(1234)
+inTrain <- createDataPartition(y = trainingAll$classe, p = 0.5, list = FALSE)
+training <- trainingAll[inTrain, ]
+testAndCross <- trainingAll[-inTrain, ]
+
+inTest <- createDataPartition(y = testAndCross$classe, p = 0.5, list = FALSE)
+testing <- testAndCross[inTest,]
+crosVal <- testAndCross[-inTest,]
+```
+
+Now, we pre-process the "trainng"" data by centering and scaling it. We then apply this pre-processing to "crosVal" and "testing". Note that to correctly evaluate our model's accuracy, "crosVal" and "testing" have to be pre-processed by the parameters obtained from "training".
+
+```{r}
+#### Pre-process the predictor data
+preObj <- preProcess(training[, -53], method = c("center", "scale"))
+trainPre <- predict(preObj, training[, -53])
+testPre <- predict(preObj, testing[, -53])
+crosValPre <- predict(preObj, crosVal[, -53])
+
+#### Add the classe columns
+trainPre$classe <- as.factor(training$classe)
+testPre$classe <- as.factor(testing$classe)
+crosValPre$classe <- as.factor(crosVal$classe)
+```
+
+## =======================================================================
+
+## Part 3: Train Simple Machine Learning Model
+
+There are three classification models that we tried in this work: Rpart, GBM, and RandomForest. ADA is another classification type but only available for data with two factor levels. 
+
+The training data set is "trainPre". For randomForest, we directly call the function to reduce the running time.
+
+```{r results="hide"}
+#### Tree Rpart
+modRPa <- train(classe ~ ., method = "rpart", data = trainPre)
+#### Boosting with GBM
+modGBM <- train(classe ~ ., method = "gbm", data = trainPre, verbose = FALSE)
+#### Random Forest
+library(randomForest)
+modRFo <- randomForest(x = trainPre[, -53], y = trainPre$classe, prox = TRUE)
+```
+
+## =======================================================================
+
+## Part 4: Blending the Learning Models
+
+To blend different models, we first evaluate them using the "crosValPre" and then blend them together with "crosValPre$classe". Note that we only blend GBM and RF since Rpart yeilds a far worse accuracy (to be shown later). Therefore, blending Rpart will not help much.
+
+```{r results="hide"}
+predCrosGBM <- predict(modGBM, crosValPre[, -53])
+predCrosRFo <- predict(modRFo, crosValPre[, -53])
+
+#### Blend the learning models
+predRFGBM <- data.frame(x1 = as.factor(predCrosGBM), x2 = as.factor(predCrosRFo), classe = crosValPre$classe)
+combModRFGBM <- train(classe ~ ., method = "gbm", data = predRFGBM, verbose = FALSE)
+```
+
+## =======================================================================
+
+## Part 5: Predicting the Accuracies of Our Learning Models
+
+We now use "testPre" to predict the accuracies of our models. For GBM and RF
+
+```{r}
+predTestRPa <- predict(modRPa, testPre[, -53])
+predTestGBM <- predict(modGBM, testPre[, -53])
+predTestRFo <- predict(modRFo, testPre[, -53])
+```
+
+For the blended GBM+RF
+
+```{r}
+predTestRFGBM <- data.frame(x1 = as.factor(predTestGBM), x2 = as.factor(predTestRFo))
+combPredTestRFGBM <- predict(combModRFGBM, predTestRFGBM)
+```
+
+The predicted accuracies are
+
+```{r}
+tmp1 <- confusionMatrix(predTestRPa, testPre$classe)$overall[1]
+tmp2 <- confusionMatrix(predTestGBM, testPre$classe)$overall[1]
+tmp3 <- confusionMatrix(predTestRFo, testPre$classe)$overall[1]
+tmp4 <- confusionMatrix(combPredTestRFGBM, testPre$classe)$overall[1]
+
+accuracyTable <- data.frame(Rpart = tmp1, GBM = tmp2, RandomForest = tmp3, GBMnRF = tmp4)
+accuracyTable
+```
+
+We observe that Rpart is far worse than GBM and RF. Also, the predictions of GBM and RF alone are alone so accurate. The blending thus has little effect. 
+
+## =======================================================================
+
+## Part 6: Testing Our Learning Models to the Real Testing Data
+
+We now use our models to determine the quality of the activities given in testing set. We first load the testing data. We then select only the columns that used to train the models
+
+```{r}
+trueTestingRaw  <- read.csv("pml-testing.csv")
+trueTestingAll <- trueTestingRaw[names(trainingAll[,-53])]
+```
+
+Now we pre-process the testind data using the parameters obtained from the training data.
+
+```{r}
+#### Pre-process the test data
+trueTestingAll <- predict(preObj, trueTestingAll)
+```
+
+We then determine the activity type with our 3 models: GBM, RF, and GBm+RF
+
+```{r}
+#### GBM and RandomForest
+predTrueGBM <- predict(modGBM, trueTestingAll)
+predTrueRFo <- predict(modRFo, newdata = trueTestingAll)
+
+#### Combining predictors
+predTrueRFGBM <- data.frame(x1 = as.factor(predTrueGBM), 
+                            x2 = as.factor(predTrueRFo))
+combPredTrueRFGBM <- predict(combModRFGBM, predTrueRFGBM)
+```
+
+The results are
+
+```{r}
+predTrueGBM
+predTrueRFo
+combPredTrueRFGBM
+```
+
+We observe that the three sets of activity types are identical. This is due to the fact that the accuracies of our 3 models: GBM, RandomForest, and GBM+RF are very high.
+
+
